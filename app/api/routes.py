@@ -1,13 +1,21 @@
 from fastapi import APIRouter, Depends, HTTPException
 from elasticsearch import Elasticsearch
-from app.caching import get_redis_cache
+from app.caching import get_redis_cache, LayeredCache, LRUCache
 from app.models import get_user, update_user_requests
 import time
-from app.caching import LayeredCache, LRUCache
+
 router = APIRouter()
 
-es = Elasticsearch()
-cache = get_redis_cache()
+# Initialize Elasticsearch client
+es = Elasticsearch(hosts=["http://localhost:9200"])
+
+# Initialize Redis cache
+redis_cache = get_redis_cache()
+
+# Initialize LRU Cache and Layered Cache
+lru_cache = LRUCache(capacity=100)
+layered_cache = LayeredCache(redis_cache)
+
 
 @router.get("/search")
 def search_documents(text: str, user_id: str, top_k: int = 10, threshold: float = 0.5):
@@ -22,13 +30,12 @@ def search_documents(text: str, user_id: str, top_k: int = 10, threshold: float 
     cache_key = f"{user_id}:{text}:{threshold}"
     
     # Check in LRU Cache first
-    lru_cache = LRUCache(capacity=100)
     if lru_cache.exists(cache_key):
         results = lru_cache.get(cache_key)
     else:
         # If not found, check in Redis (or Layered Cache)
-        if LayeredCache.exists(cache_key):
-            results = LayeredCache.get(cache_key)
+        if layered_cache.exists(cache_key):
+            results = layered_cache.get(cache_key)
         else:
             # Perform search query
             query = {
@@ -42,7 +49,7 @@ def search_documents(text: str, user_id: str, top_k: int = 10, threshold: float 
             results = es.search(index="documents", body=query)["hits"]["hits"]
             
             # Store in Redis and LRU Cache
-            LayeredCache.set(cache_key, results, ttl=3600)
+            layered_cache.set(cache_key, results, ttl=3600)
             lru_cache.set(cache_key, results)
 
     # Update user request count
