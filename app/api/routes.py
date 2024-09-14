@@ -3,38 +3,47 @@ from elasticsearch import Elasticsearch
 from app.caching import get_redis_cache
 from app.models import get_user, update_user_requests
 import time
-
+from app.caching import LayeredCache, LRUCache
 router = APIRouter()
 
 es = Elasticsearch()
 cache = get_redis_cache()
 
 @router.get("/search")
-def search_documents(text: str, top_k: int = 10, threshold: float = 0.5, user_id: str):
+def search_documents(text: str, user_id: str, top_k: int = 10, threshold: float = 0.5):
     # Rate limiting
     user = get_user(user_id)
-    if user and user.requests_count >= 5:
+    if user and user['requests_count'] >= 5:
         raise HTTPException(status_code=429, detail="Too many requests")
 
     start_time = time.time()
 
-    # Search query
-    query = {
-        "query": {
-            "match": {
-                "content": text
-            }
-        },
-        "size": top_k
-    }
+    # Cache key generation
+    cache_key = f"{user_id}:{text}:{threshold}"
     
-    # Caching logic
-    cache_key = f"{user_id}:{text}:{top_k}:{threshold}"
-    if cache.exists(cache_key):
-        results = cache.get(cache_key)
+    # Check in LRU Cache first
+    lru_cache = LRUCache(capacity=100)
+    if lru_cache.exists(cache_key):
+        results = lru_cache.get(cache_key)
     else:
-        results = es.search(index="documents", body=query)["hits"]["hits"]
-        cache.set(cache_key, results)
+        # If not found, check in Redis (or Layered Cache)
+        if LayeredCache.exists(cache_key):
+            results = LayeredCache.get(cache_key)
+        else:
+            # Perform search query
+            query = {
+                "query": {
+                    "match": {
+                        "content": text
+                    }
+                },
+                "size": top_k
+            }
+            results = es.search(index="documents", body=query)["hits"]["hits"]
+            
+            # Store in Redis and LRU Cache
+            LayeredCache.set(cache_key, results, ttl=3600)
+            lru_cache.set(cache_key, results)
 
     # Update user request count
     update_user_requests(user_id)
