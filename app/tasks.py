@@ -1,20 +1,30 @@
 from celery import Celery
 import requests
 from bs4 import BeautifulSoup
-from elasticsearch import Elasticsearch
+from elasticsearch import Elasticsearch, exceptions as es_exceptions
 
 # Initialize Celery
 celery = Celery(__name__, broker="redis://localhost:6379/0")
 
 # Initialize Elasticsearch client
-es = Elasticsearch()
+try:
+    es = Elasticsearch(hosts=["http://localhost:9200"])
+    es.info()  # Test the connection to Elasticsearch
+except es_exceptions.ConnectionError as e:
+    print(f"Elasticsearch connection error: {e}")
+    es = None
 
 @celery.task
 def scrape_news():
     url = "https://news.ycombinator.com/"  # Example news site (Hacker News)
-    response = requests.get(url)
-    soup = BeautifulSoup(response.text, 'html.parser')
+    try:
+        response = requests.get(url)
+        response.raise_for_status()  # Raise an exception for HTTP errors
+    except requests.exceptions.RequestException as e:
+        print(f"Error fetching the news: {e}")
+        return
 
+    soup = BeautifulSoup(response.text, 'html.parser')
     articles = []
 
     # Example of scraping headlines
@@ -27,11 +37,17 @@ def scrape_news():
             "content": title  # Here you can add more content if available
         })
 
-    # Store in Elasticsearch
-    for article in articles:
-        es.index(index="news", body=article)
+    if es:
+        # Store in Elasticsearch
+        for article in articles:
+            try:
+                es.index(index="news", body=article)
+            except es_exceptions.ElasticsearchException as e:
+                print(f"Error indexing article: {e}")
 
-    print(f"Scraped and indexed {len(articles)} articles.")
+        print(f"Scraped and indexed {len(articles)} articles.")
+    else:
+        print("Elasticsearch client not initialized; skipping indexing.")
 
-# Start scraping when the server starts
-scrape_news.delay()
+# You might want to remove this to avoid immediate task execution on module load
+# scrape_news.delay()
