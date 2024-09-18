@@ -8,7 +8,7 @@
 <h1>Document Retrieval System</h1>
 
 <h2>Overview</h2>
-<p>This project is a backend document retrieval system designed for chat applications to use as context. The system scrapes news articles, stores them in an Elasticsearch database, and provides fast retrieval via an API. The backend is built with FastAPI, and the system utilizes Redis for caching and Elasticsearch for document storage.</p>
+<p>This project is a backend document retrieval system designed for chat applications to use as context. The system scrapes news articles, stores them in an Elasticsearch database, and provides fast retrieval via an API. The backend is built with FastAPI, and the system utilizes Redis for caching and Elasticsearch for document storage.</p> 
 
 <h2>Features</h2>
 <ul>
